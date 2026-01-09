@@ -2,9 +2,19 @@ import os
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+import streamlit as st
 
 # Load environment variables
 load_dotenv()
+
+def _get_secret(key):
+    try:
+        return st.secrets.get(key)
+    except Exception:
+        return None
+
+OPENWEATHER_API_KEY = _get_secret("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER_API_KEY")
+DEEPSEEK_API_KEY = _get_secret("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -23,14 +33,14 @@ def get_weather_forecast(city: str, travel_date: str):
         delta = (trip_dt - datetime.now().days) # Current date check
         
         # If API limit is hit or date is far, we return a fallback signal
-        api_key = os.getenv("OPENWEATHER_API_KEY")
-        if not api_key:
+       
+        if not OPENWEATHER_API_KEY:
             return "API_UNAVAILABLE"
 
         if delta > 5 or delta < 0:
             return "DATE_TOO_FAR"
 
-        url = f"http://api.openweathermap.org/data/2.5/forecast?q={city}&appid={api_key}&units=metric"
+        url = f"http://api.openweathermap.org/data/2.5/forecast?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
         response = requests.get(url).json()
         
         if str(response.get("cod")) != "200":
@@ -48,7 +58,7 @@ def get_weather_forecast(city: str, travel_date: str):
 def get_deepseek_agent(temperature=0.7):
     return ChatOpenAI(
         model="deepseek-chat",
-        openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
+        openai_api_key=DEEPSEEK_API_KEY,
         base_url="https://api.deepseek.com",
         temperature=temperature
     )
