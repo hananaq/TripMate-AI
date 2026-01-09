@@ -105,9 +105,39 @@ def add_custom_styles():
         position: relative;
     }}
 
+    .logo-wrap {{
+        display: flex;
+        justify-content: center;
+    }}
+
+    .logo-wrap img {{
+        display: block;
+        width: 240px;
+        max-width: 240px;
+    }}
+
     @media (max-width: 768px) {{
         .result-grid {{
             grid-template-columns: 1fr;
+        }}
+
+        .logo-wrap img {{
+            width: 190px !important;
+            max-width: 190px !important;
+        }}
+
+        div[data-testid="stHorizontalBlock"] {{
+            flex-wrap: nowrap;
+        }}
+
+        div[data-testid="stHorizontalBlock"] > div {{
+            min-width: 0;
+        }}
+
+        .stForm button {{
+            width: 100% !important;
+            font-size: 0.9rem !important;
+            padding: 0.6rem 0.4rem !important;
         }}
     }}
 
@@ -476,8 +506,11 @@ def create_pdf(destination, text_content, title="Travel Plan"):
 # --- 3. MAIN APP UI ---
 
 if os.path.exists("logo.png"):
-    col1, col2, col3 = st.columns([3, 2, 3])
-    with col2: st.image("logo.png", use_container_width=True)
+    logo_b64 = get_base64_of_bin_file("logo.png")
+    st.markdown(
+        f"<div class='logo-wrap'><img src='data:image/png;base64,{logo_b64}' alt='TripMate logo'></div>",
+        unsafe_allow_html=True,
+    )
 
 st.markdown("""
 <div style='text-align: center; color: #555; margin-bottom: 25px;'>
