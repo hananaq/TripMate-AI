@@ -7,3 +7,5 @@ requests
 markdown
 fpdf2   
 geonamescache
+pandas
+streamlit-extras
