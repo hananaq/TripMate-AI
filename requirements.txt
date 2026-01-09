@@ -1,0 +1,9 @@
+streamlit
+langchain
+langchain-core
+langchain-openai
+python-dotenv
+requests
+markdown
+fpdf2   
+geonamescache
