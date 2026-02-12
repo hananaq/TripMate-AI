@@ -1,657 +1,989 @@
 import streamlit as st
-import os
-import base64
-import html
-import re
 import pandas as pd
-from fpdf import FPDF
-from agent import run_advisor, get_itinerary
-from datetime import date as dt_date
-from streamlit_extras.stylable_container import stylable_container
+from datetime import datetime, timedelta
+from agent import TripMateAgent
+import base64
+from io import BytesIO
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
+import re
+import os
 
-# --- 1. CONFIG & CUSTOM STYLING ---
-st.set_page_config(page_title="TripMate AI", page_icon="🌏", layout="centered")
+# Page configuration
+st.set_page_config(
+    page_title="TripMate AI - Your Smart Travel Assistant",
+    page_icon="✈️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 def get_base64_of_bin_file(bin_file):
     with open(bin_file, 'rb') as f:
         data = f.read()
     return base64.b64encode(data).decode()
 
-def add_custom_styles():
-    bg_file = "background.png" if os.path.exists("background.png") else "background.jpg" if os.path.exists("background.jpg") else None
-    if bg_file:
-        bin_str = get_base64_of_bin_file(bg_file)
-        bg_image_css = f"""
-            background-image: linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.85)), url("data:image/png;base64,{bin_str}");
-            background-size: 400px;
-            background-repeat: repeat;
-            background-attachment: fixed;
+
+
+# Function to set background image
+def set_background(image_file):
+    try:
+        with open(image_file, "rb") as f:
+            img_data = f.read()
+        b64_encoded = base64.b64encode(img_data).decode()
+        style = f"""
+            <style>
+            .stApp {{
+                background-image: linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.85)), url("data:image/png;base64,{b64_encoded}");
+                background-size: 400px;
+                background-repeat: repeat;
+                background-attachment: fixed;
+            }}
+            </style>
         """
-    else:
-        bg_image_css = "background-color: #fefefe;"
+        st.markdown(style, unsafe_allow_html=True)
+    except:
+        pass
 
-    st.markdown(f"""
-    <style>
-    :root, html, body {{
-        color-scheme: light;
-    }}
+# Set background
+set_background('background.png')
 
-    .stApp {{
-        {bg_image_css}
-        display: flex;
-        flex-direction: column;
-        min-height: 100vh;
-    }}
-
-    .stApp > .main {{
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-    }}
-
-    .block-container {{
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-height: 100vh;
-    }}
+# Custom CSS with pastel colors and dashed borders
+st.markdown("""
+<style>
+    /* Change Streamlit's default red to pastel blue */
+    :root {
+        --primary-color: #A8D8EA !important;
+        --background-color: #FFFFFF;
+        --secondary-background-color: #F7F9FC;
+        --text-color: #2D3561;
+    }
     
-    .stMarkdownContainer, .stForm {{
-        background-color: rgba(255, 255, 255, 0.92);
-        padding: 30px;
-        border-radius: 15px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        border: 1px solid #f0f0f0;
-    }}
-
-    /* FIX NUMBER INPUT (+/-) BUTTONS */
-    div[data-testid="stNumberInput"] button {{
-        border-color: transparent !important;
-        background-color: transparent !important;
-    }}
+    .main-header {
+        font-size: 3rem;
+        font-weight: bold;
+        text-align: center;
+        color: #6B9AC4;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 0.5rem;
+    }
+    .sub-header {
+        font-size: 1.3rem;
+        text-align: center;
+        color: #2D3561;
+        font-weight: 600;
+        margin-bottom: 2rem;
+    }
     
-    div[data-testid="stNumberInput"] button:hover {{
-        border-color: #2a9d8f !important;
-        color: #2a9d8f !important;
-    }}
-
-    div[data-testid="stNumberInput"] button:active, 
-    div[data-testid="stNumberInput"] button:focus {{
-        background-color: #2a9d8f !important;
-        color: white !important;
-        border-color: #2a9d8f !important;
-        box-shadow: none !important;
-    }}
-
-    input:focus {{
-        border-color: #2a9d8f !important;
-        box-shadow: none !important;
-    }}
-
-    /* Center Download Button */
-    div.stDownloadButton {{
-        display: flex;
-        justify-content: center;
-        margin-top: 16px;
-    }}
-
-    .css-15zrgzn {{display: none}}
-
-    .result-grid {{
+    /* Container for 2-column layout */
+    .box-container {
         display: grid;
-        grid-template-columns: repeat(2, minmax(260px, 1fr));
-        gap: 24px;
-        margin-top: 12px;
-        position: relative;
-    }}
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin: 1rem 0;
+    }
+    
+    /* Base box style - white background with dashed border */
+    .info-box {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+    
+    /* Individual box styles with pastel dashed borders */
+    .budget-box {
+        background: white;
+        border: 4px dashed #C7B8EA;
+        color: #2D3561;
+    }
+    .packing-box {
+        background: white;
+        border: 4px dashed #FFB6C1;
+        color: #2D3561;
+    }
+    .itinerary-box {
+        background: white;
+        border: 4px dashed #A8D8EA;
+        color: #2D3561;
+    }
+    .transport-box {
+        background: white;
+        border: 4px dashed #B4E7CE;
+        color: #2D3561;
+    }
+    .culture-box {
+        background: white;
+        border: 4px dashed #FFD4A3;
+        color: #2D3561;
+    }
+    .restaurant-box {
+        background: white;
+        border: 4px dashed #B8E6E6;
+        color: #2D3561;
+    }
+    .currency-box {
+        background: white;
+        border: 4px dashed #E6D5F5;
+        color: #2D3561;
+        grid-column: 1 / -1;
+    }
+    
+    .section-title {
+        font-size: 1.6rem;
+        font-weight: bold;
+        margin-bottom: 1rem;
+        color: #2D3561;
+    }
+    
+    /* Remove extra spacing from HTML elements */
+    .info-box h4 {
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        color: #2D3561;
+        font-weight: 600;
+    }
+    
+    .info-box strong {
+        color: #2D3561;
+        font-weight: 600;
+    }
+    
+    .info-box ul {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+    }
+    
+    .info-box li {
+        margin: 0.3rem 0;
+        line-height: 1.5;
+    }
+    
+    .info-box p {
+        margin: 0.5rem 0;
+        line-height: 1.6;
+    }
+    
+    /* Button styling with pastel blue */
+    .stButton>button {
+        width: 100%;
+       background: #429dbd !important;
+    color: #fff !important
+        font-weight: bold;
+        padding: 0.75rem;
+        border-radius: 10px;
+        border: none !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+     
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+    }
+    
+    /* Download button specific styling */
+  .stDownloadButton>button {
+    background: #62b5d5 !important;
+    color: #fff !important;
+    font-weight: bold;
+}
+    
+    /* Sidebar styling with pastel blue gradient */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #D4EBF8 0%, #A8D8EA 100%) !important;
+    }
+    
+    [data-testid="stSidebar"] > div:first-child {
+        background-color: transparent;
+    }
+    
+    /* Sidebar text color */
+    [data-testid="stSidebar"] .element-container {
+        color: #2D3561;
+    }
+    
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] label {
+        color: #2D3561 !important;
+    }
+    
+    /* Progress bar color - pastel blue */
+    .stProgress > div > div > div > div {
+        background-color: #A8D8EA !important;
+    }
+    
+    /* Checkbox styling - pastel blue */
+    .stCheckbox > label > div[data-testid="stMarkdownContainer"] > p {
+        color: #2D3561;
+    }
+    
+    input[type="checkbox"] {
+        accent-color: #2d3561 !important;
+    }
+    
+    /* Radio button styling - pastel blue */
+    input[type="radio"] {
+        accent-color: #A8D8EA !important;
+    }
+    
+    /* Select slider (travel style) - pastel blue */
+    .stSlider > div > div > div > div {
+        background-color: #fff !important;
+    }
+    
+    .stSlider > div > div > div {
+         background-color: #fff !important;
+            # background: linear-gradient(to right, #2d3561 0%, #2d3561 50%, rgba(151, 166, 195, 0.25) 50%, rgba(151, 166, 195, 0.25) 100%);
+    }
 
-    .logo-wrap {{
+    .st-emotion-cache-jigjfz
+    {    
+        color: rgb(67 109 155);
+    }
+    /* Slider thumb */
+    .stSlider [role="slider"] {
+        background-color: #62b5d5 !important;
+    }
+    /* Checkbox box: unchecked = white, checked = #2d3561 */
+    .stCheckbox label[data-baseweb="checkbox"] > span {
+        background-color: #fff !important;
+        border: 1px solid #2d3561 !important;
+    }
+    .stCheckbox label[data-baseweb="checkbox"]:has(input:checked) > span {
+        background-color: #2d3561 !important;
+        border-color: #2d3561 !important;
+    }
+    .st-emotion-cache-99anic:hover:enabled, .st-emotion-cache-99anic:focus:enabled
+            {
+             background-color: #2d3561;
+            }
+    /* Multi-select styling */
+    .stMultiSelect > div > div {
+        background-color: white;
+            border-radius: 8px;
+    }
+    
+    .stMultiSelect [data-baseweb="tag"] {
+        background-color: #A8D8EA !important;
+        color: #2D3561 !important;
+    }
+    
+    /* Selectbox and input styling in sidebar */
+    [data-testid="stSidebar"] .stSelectbox > div > div,
+    [data-testid="stSidebar"] .stTextInput > div > div,
+    [data-testid="stSidebar"] .stDateInput > div > div,
+    [data-testid="stSidebar"] .stMultiSelect > div > div {
+        background-color: white;
+    }
+    
+    /* Number input styling */
+    [data-testid="stSidebar"] .stNumberInput > div > div {
+        background-color: white;
+    }
+     .logo-wrap {
         display: flex;
         justify-content: center;
-    }}
+    }
 
-    .logo-wrap img {{
+    .logo-wrap img {
         display: block;
         width: 240px;
         max-width: 240px;
-    }}
-
-    @media (max-width: 768px) {{
-        .result-grid {{
-            grid-template-columns: 1fr;
-        }}
-
-        .logo-wrap img {{
+    }
+            
+    @media (max-width: 768px) {
+        .logo-wrap img {
             width: 190px !important;
             max-width: 190px !important;
-        }}
+        }
+    }
 
-        div[data-testid="stHorizontalBlock"] {{
-            flex-wrap: nowrap;
-        }}
+    .app-footer {
+    position: fixed;           /* Stays at bottom */
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: linear-gradient(90deg, #D4EBF8 0%, #A8D8EA 100%);
+    padding: 1rem;
+    text-align: center;
+    color: #2D3561;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+    z-index: 999;              /* Always on top */
+}
 
-        div[data-testid="stHorizontalBlock"] > div {{
-            min-width: 0;
-        }}
-
-        .stForm button {{
-            width: 100% !important;
-            font-size: 0.9rem !important;
-            padding: 0.6rem 0.4rem !important;
-        }}
-    }}
-
-    .result-card {{
-        background: #ffffff;
-        border: 3px dashed var(--card-color, #f2c4c4);
-        border-radius: 18px;
-        padding: 18px 20px;
-        box-shadow: 0 8px 18px rgba(0,0,0,0.08);
-        position: relative;
-    }}
-
-    .result-card-title {{
-        font-weight: 700;
-        font-size: 1.05rem;
-        margin-bottom: 10px;
-        color: #264653;
-    }}
-
-    .result-card p {{
-        margin: 0 0 10px 0;
-        color: #374151;
-        line-height: 1.5;
-    }}
-
-    .result-card ul {{
-        margin: 0 0 10px 20px;
-        padding: 0;
-        color: #374151;
-        line-height: 1.5;
-    }}
-
-    .result-card.with-connector::after {{
-        content: "";
-        position: absolute;
-        left: 50%;
-        bottom: -52px;
-        width: 52px;
-        height: 52px;
-        border-left: 3px dashed var(--card-color, #f2c4c4);
-        border-bottom: 3px dashed var(--card-color, #f2c4c4);
-        border-bottom-left-radius: 50px;
-        transform: translateX(-50%) rotate(-20deg);
-    }}
-
-    .result-card.with-top-connector::before {{
-        content: "";
-        position: absolute;
-        left: 50%;
-        top: -22px;
-        width: 0;
-        height: 22px;
-        border-left: 3px dashed var(--card-color, #f2c4c4);
-        transform: translateX(-50%);
-    }}
-
-    .app-footer {{
-        margin-top: auto;
-        text-align: center;
-        color: #888;
-        padding: 16px 0 10px;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
-
-add_custom_styles()
-
-PASTEL_COLORS = [
-    "#f2c4c4",
-    "#bfe1dd",
-    "#f6e1a6",
-    "#c9d8ff",
-    "#dcc9f2",
-    "#cfe8b4",
-]
-
-CITIES_CSV_PATH = "cities_geonames_1000.csv"  # same folder as app.py
-
-@st.cache_data(show_spinner=False)
-def load_city_options(path: str) -> list[str]:
-    df = pd.read_csv(
-        path,
-        usecols=["city_name", "country_name"],
-        dtype={"city_name": "string", "country_name": "string"},
-    ).dropna()
-
-    labels = (df["city_name"].str.strip() + ", " + df["country_name"].str.strip())
-    # remove duplicates, keep stable ordering
-    labels = labels.drop_duplicates().tolist()
-    return labels
-
-
-def _format_markdown_to_html(text):
-    safe = html.escape(text)
-    safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
-    safe = re.sub(r"^[-•]\s*$", "", safe, flags=re.MULTILINE)
-    lines = safe.splitlines()
-    has_list = any(line.strip().startswith(("-", "•")) for line in lines)
-    if not has_list:
-        joined = " ".join(line.strip() for line in lines if line.strip())
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", joined) if s.strip()]
-        if len(sentences) > 1:
-            return "<ul>" + "".join(f"<li>{s}</li>" for s in sentences) + "</ul>"
-    out = []
-    in_list = False
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            if in_list:
-                out.append("</ul>")
-                in_list = False
-            out.append("<br>")
-            continue
-        if stripped.startswith(("-", "•")):
-            bullet_text = stripped[1:].strip()
-            if not bullet_text:
-                continue
-            if not in_list:
-                out.append("<ul>")
-                in_list = True
-            out.append(f"<li>{bullet_text}</li>")
-        else:
-            if in_list:
-                out.append("</ul>")
-                in_list = False
-            out.append(f"<p>{stripped}</p>")
-    if in_list:
-        out.append("</ul>")
-    return "\n".join(out)
-
-def _split_by_bold_sections(text):
-    parts = re.split(r"\*\*(.+?)\*\*", text)
-    sections = []
-    if len(parts) < 3:
-        return [("Details", text.strip())]
-    for i in range(1, len(parts), 2):
-        title = parts[i].strip()
-        content = parts[i + 1].strip() if i + 1 < len(parts) else ""
-        if title or content:
-            sections.append((title or "Details", content))
-    return sections or [("Details", text.strip())]
-
-def _split_packing_by_headings(text):
-    heading_pattern = re.compile(
-        r"^(?:\*\*)?\s*(?:🌤️|🎒|🧳|💡|💱)?\s*(Weather Analysis|Weather|Packing Strategy|Packing|Logistics Alert|Local Tips|Currency)\s*:?\s*(?:\*\*)?$",
-        re.IGNORECASE,
-    )
-    sections = []
-    current_title = None
-    buffer = []
-    for line in text.splitlines():
-        raw = line.strip()
-        match = heading_pattern.match(raw)
-        if match:
-            if current_title:
-                sections.append((current_title, "\n".join(buffer).strip()))
-            heading_text = raw.strip("*").strip()
-            if not any(ch in heading_text for ch in ["🌤️", "🎒", "💡", "💱"]):
-                label = match.group(1).lower()
-                if label.startswith("weather"):
-                    heading_text = "🌤️ Weather Analysis"
-                elif label.startswith("packing"):
-                    heading_text = "🎒 Packing Strategy"
-                elif label.startswith("logistics"):
-                    heading_text = "🧳 Logistics Alert"
-                elif label.startswith("local"):
-                    heading_text = "💡 Local Tips"
-                else:
-                    heading_text = "💱 Currency"
-            current_title = heading_text
-            buffer = []
-        else:
-            buffer.append(line)
-    if current_title:
-        sections.append((current_title, "\n".join(buffer).strip()))
-    if not sections:
-        return _split_by_bold_sections(text)
-    return sections
-
-def _split_itinerary_sections(text):
-    sections = []
-    current_title = None
-    buffer = []
-    for line in text.splitlines():
-        stripped = line.strip().strip("*")
-        normalized = re.sub(r"^[#\s]+", "", stripped)
-        if re.match(r"^(Day\s+\d+.*|Money Intel.*)$", normalized, re.IGNORECASE):
-            if current_title:
-                sections.append((current_title, "\n".join(buffer).strip()))
-            if re.match(r"^Money Intel.*$", normalized, re.IGNORECASE):
-                current_title = "💱 Currency"
-            else:
-                current_title = normalized
-            buffer = []
-        else:
-            buffer.append(line)
-    if current_title:
-        sections.append((current_title, "\n".join(buffer).strip()))
-    if not sections:
-        return [("Itinerary", text.strip())]
-    return sections
-
-def render_result_cards(title, sections):
-    has_content = any(section[1].strip() for section in sections)
-    if not has_content:
-        sections = [("Output", "(No content returned. Please try again.)")]
-    cards = ['<div class="result-grid">']
-    total = len(sections)
-    for idx, (section_title, content) in enumerate(sections):
-        color = PASTEL_COLORS[idx % len(PASTEL_COLORS)]
-        connector_class = ""
-        if idx < total - 1:
-            connector_class += " with-connector"
-        if idx > 0:
-            connector_class += " with-top-connector"
-        cards.append(
-            f'<div class="result-card{connector_class}" style="--card-color: {color};">'
-            f'<div class="result-card-title">{html.escape(section_title)}</div>'
-            f'{_format_markdown_to_html(content)}'
-            "</div>"
-        )
-    cards.append("</div>")
-    st.markdown("\n".join(cards), unsafe_allow_html=True)
-
-def render_section_header(title, pdf_data=None, filename=None):
-    left, right = st.columns([4, 1])
-    with left:
-        st.markdown(f"### {title}")
-    if pdf_data and filename:
-        with right:
-            with stylable_container(
-                key=f"dl_{title.replace(' ', '_').lower()}",
-                css_styles="""
-                    button {
-                        background-color: #cfe8ff !important;
-                        color: #264653 !important;
-                        width: 160px !important;
-                        border-radius: 10px !important;
-                        border: 2px solid #b6d8fb !important;
-                        font-weight: 700 !important;
-                    }
-                """
-            ):
-                st.download_button("📄 Download", pdf_data, filename)
-
-# --- 2. PDF GENERATION ---
-class TripMatePDF(FPDF):
-    def header(self):
-        if os.path.exists("logo.png"):
-            self.image("logo.png", 85, 10, 40)
-            self.ln(35) 
-        
-
-def create_pdf(destination, text_content, title="Travel Plan"):
-    pdf = TripMatePDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    # Preserve section headings by translating **Heading** to bold lines.
-    safe_text = text_content.replace("## ", "").encode("latin-1", "ignore").decode("latin-1")
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, f"{title}: {destination}", ln=True)
-    pdf.ln(5)
-    pdf.set_font("Helvetica", size=11)
-    def _split_long_word(word, max_width):
-        chunks = []
-        chunk = ""
-        for ch in word:
-            if pdf.get_string_width(chunk + ch) <= max_width:
-                chunk += ch
-            else:
-                if chunk:
-                    chunks.append(chunk)
-                chunk = ch
-        if chunk:
-            chunks.append(chunk)
-        return chunks
-
-    def _wrap_text_for_pdf(line, first_prefix="", next_prefix=""):
-        max_width = pdf.w - pdf.l_margin - pdf.r_margin
-        first_width = max_width - pdf.get_string_width(first_prefix)
-        next_width = max_width - pdf.get_string_width(next_prefix)
-        if not line:
-            return [""]
-        words = line.split()
-        lines = []
-        current = ""
-        current_width = first_width
-        for word in words:
-            candidate = f"{current} {word}".strip()
-            if pdf.get_string_width(candidate) <= current_width:
-                current = candidate
-                continue
-            if current:
-                lines.append(current)
-                current = ""
-                current_width = next_width
-            if pdf.get_string_width(word) <= current_width:
-                current = word
-            else:
-                parts = _split_long_word(word, current_width)
-                if parts:
-                    current = parts.pop()
-                    lines.extend(parts)
-                    current_width = next_width
-        if current:
-            lines.append(current)
-        return lines
-
-    def _write_wrapped(text, first_prefix="", next_prefix=""):
-        wrapped_lines = _wrap_text_for_pdf(text, first_prefix, next_prefix)
-        for i, wrapped in enumerate(wrapped_lines):
-            prefix = first_prefix if i == 0 else next_prefix
-            if wrapped:
-                pdf.cell(0, 7, f"{prefix}{wrapped}", ln=1)
-            else:
-                pdf.ln(7)
-
-    def _write_bullets_from_text(text):
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-        if len(sentences) <= 1:
-            _write_wrapped(text)
-            return
-        for sentence in sentences:
-            _write_wrapped(sentence, first_prefix="- ", next_prefix="  ")
-
-    paragraph_lines = []
-
-    def _flush_paragraph():
-        nonlocal paragraph_lines
-        if not paragraph_lines:
-            return
-        joined = " ".join(line.strip() for line in paragraph_lines if line.strip())
-        _write_bullets_from_text(joined)
-        paragraph_lines = []
-
-    for raw_line in safe_text.splitlines():
-        line = raw_line.strip()
-        heading_match = re.match(r"^\*\*(.+?)\*\*(.*)$", line)
-        if heading_match:
-            _flush_paragraph()
-            heading = heading_match.group(1).strip()
-            remainder = heading_match.group(2).lstrip(": ").strip()
-            pdf.set_font("Helvetica", "B", 12)
-            _write_wrapped(heading)
-            pdf.set_font("Helvetica", size=11)
-            if remainder:
-                _write_bullets_from_text(remainder)
-            pdf.ln(1)
-            continue
-        if line == "":
-            _flush_paragraph()
-            pdf.ln(4)
-            continue
-        is_bullet = line.startswith("- ") or line.startswith("• ")
-        if is_bullet:
-            _flush_paragraph()
-            bullet_text = line[2:].strip()
-            _write_wrapped(bullet_text, first_prefix="- ", next_prefix="  ")
-            continue
-        clean_line = line.replace("**", "")
-        paragraph_lines.append(clean_line)
-
-    _flush_paragraph()
-    return bytes(pdf.output())
-
-# --- 3. MAIN APP UI ---
-
-if os.path.exists("logo.png"):
-    logo_b64 = get_base64_of_bin_file("logo.png")
-    st.markdown(
-        f"<div class='logo-wrap'><img src='data:image/png;base64,{logo_b64}' alt='TripMate logo'></div>",
-        unsafe_allow_html=True,
-    )
-
-st.markdown("""
-<div style='text-align: center; color: #555; margin-bottom: 25px;'>
-    <p style='font-size: 1rem; color: #888;'>Smart Packing & Perfect Itineraries</p>
-</div>
+</style>
 """, unsafe_allow_html=True)
 
+def load_cities():
+    """Load cities data from CSV with City, Country format."""
+    try:
+        df = pd.read_csv('cities_geonames_1000.csv')
+        
+        if 'csv_loaded' not in st.session_state:
+            st.session_state.csv_loaded = True
+            # print(f"CSV columns: {df.columns.tolist()}")
+        
+        # Find city name column
+        city_col = None
+        for col in ['name', 'city', 'city_name', 'geoname', 'asciiname']:
+            if col in df.columns:
+                city_col = col
+                break
+        
+        if city_col is None:
+            city_col = df.columns[0]
+        
+        # Find country column
+        country_col = None
+        for col in ['country', 'country_name', 'country_code', 'countrycode', 'iso2', 'cc']:
+            if col in df.columns:
+                country_col = col
+                break
+        
+        # Create display names
+        if country_col:
+            df['display_name'] = df[city_col].astype(str) + ', ' + df[country_col].astype(str)
+            city_mapping = dict(zip(df['display_name'], df[city_col]))
+        else:
+            df['display_name'] = df[city_col].astype(str)
+            city_mapping = dict(zip(df['display_name'], df[city_col]))
+        
+        display_names = df['display_name'].dropna().unique().tolist()
+        display_names_sorted = sorted(display_names)
+        
+        return display_names_sorted, city_mapping
+        
+    except FileNotFoundError:
+        # No default cities - return empty
+        return [], {}
+    except Exception as e:
+        print(f"Error loading cities: {str(e)}")
+        return [], {}
 
-with st.form("trip_form"):
-    # dest = st.text_input("Where to?", placeholder="Tokyo, Japan")
-    city_options = load_city_options(CITIES_CSV_PATH)
+def clean_html_output(text):
+    """Clean up HTML output properly - convert markdown to HTML."""
+    if not text:
+        return ""
+    
+    text = text.strip()
+    # Prevent Streamlit/KaTeX from interpreting currency amounts as math
+    text = text.replace('$', '__DOLLAR__')
+    
+    # CRITICAL FIRST: Unescape HTML entities (&lt; becomes <, &gt; becomes >)
+    text = text.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+    text = text.replace('&#60;', '<').replace('&#62;', '>').replace('&#38;', '&')
 
-    dest = st.selectbox(
-        "Where to?",
-        options=city_options,
-        index=None,  # nothing selected by default
-        placeholder="Search city…",
+    # Strip fenced code blocks, inline backticks, and HTML code wrappers
+    text = re.sub(r'```[a-zA-Z0-9_-]*\n?', '', text)
+    text = text.replace('```', '')
+    text = text.replace('`', '')
+    text = re.sub(r'</?pre[^>]*>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'</?code[^>]*>', '', text, flags=re.IGNORECASE)
+    
+    # If text contains literal "<h4>" strings, we need to remove them completely
+    # This is a nuclear option for stubborn cases
+    if '<h4>' in text.lower():
+        # Remove all h4 tags and their content, replacing with markdown
+        text = re.sub(r'<h4[^>]*>(.*?)</h4>', r'**\1**', text, flags=re.IGNORECASE | re.DOTALL)
+        # Also catch any orphaned tags
+        text = text.replace('<h4>', '').replace('</h4>', '')
+        text = text.replace('<H4>', '').replace('</H4>', '')
+    
+    # First pass: Strip ALL HTML tags and convert to plain text with markdown
+    # This prevents double-encoding issues
+    text = re.sub(r'<h4[^>]*>(.*?)</h4>', r'**\1**', text, flags=re.IGNORECASE)
+    text = re.sub(r'<h3[^>]*>(.*?)</h3>', r'**\1**', text, flags=re.IGNORECASE)
+    text = re.sub(r'<h2[^>]*>(.*?)</h2>', r'**\1**', text, flags=re.IGNORECASE)
+    text = re.sub(r'<strong[^>]*>(.*?)</strong>', r'**\1**', text, flags=re.IGNORECASE)
+    text = re.sub(r'<b[^>]*>(.*?)</b>', r'**\1**', text, flags=re.IGNORECASE)
+    text = re.sub(r'<em[^>]*>(.*?)</em>', r'*\1*', text, flags=re.IGNORECASE)
+    text = re.sub(r'<i[^>]*>(.*?)</i>', r'*\1*', text, flags=re.IGNORECASE)
+    
+    # Remove any remaining stray HTML tags
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<p[^>]*>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<ul[^>]*>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'</ul>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'</li>', '\n', text, flags=re.IGNORECASE)
+    
+    # CATCH-ALL: Remove any other HTML tags that might remain
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Now process clean markdown into proper HTML
+    lines = text.split('\n')
+    result_lines = []
+    in_list = False
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Check for bold markers with headers (these become h4)
+        if line.startswith('**') and line.endswith('**') and len(line) > 4:
+            header_text = line.strip('*').strip()
+            if in_list:
+                result_lines.append('</ul>')
+                in_list = False
+            result_lines.append(f'<h4>{header_text}</h4>')
+        
+        # Check for bullet points
+        elif line.startswith('•') or line.startswith('-'):
+            if not in_list:
+                result_lines.append('<ul>')
+                in_list = True
+            item_text = line[1:].strip()
+            # Remove any remaining ** markers
+            item_text = item_text.replace('**', '')
+            result_lines.append(f'<li>{item_text}</li>')
+        
+        # Regular paragraph
+        else:
+            if in_list:
+                result_lines.append('</ul>')
+                in_list = False
+            # Convert ** to strong tags
+            line = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', line)
+            result_lines.append(f'<p>{line}</p>')
+    
+    if in_list:
+        result_lines.append('</ul>')
+    
+    html_output = '\n'.join(result_lines)
+    
+    # Final cleanup: unescape any HTML entities that might have been created
+    import html as html_module
+    html_output = html_module.unescape(html_output)
+    html_output = html_output.replace('__DOLLAR__', '&#36;')
+    
+    # Final check for any literal h4 tags that escaped earlier processing
+    # Keep this strictly scoped to a single element to avoid clipping content
+    if '<h4>' in html_output and not html_output.startswith('<h4>'):
+        html_output = re.sub(r'<p>[^<]*?<h4>(.*?)</h4>[^<]*?</p>', r'<p><strong>\1</strong></p>', html_output, flags=re.IGNORECASE)
+        html_output = re.sub(r'<li>[^<]*?<h4>(.*?)</h4>[^<]*?</li>', r'<li><strong>\1</strong></li>', html_output, flags=re.IGNORECASE)
+
+    return html_output
+
+def create_pdf(content_dict, destination, dates):
+    """Create a compact PDF without page breaks between sections."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter,
+                           rightMargin=72, leftMargin=72,
+                           topMargin=72, bottomMargin=18)
+    
+    styles = getSampleStyleSheet()
+    def _strip_emoji(text: str) -> str:
+        if not text:
+            return ""
+        # Keep ASCII only to avoid broken glyphs in PDF
+        return "".join(ch for ch in text if ord(ch) < 128)
+
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor='#6B9AC4',
+        spaceAfter=6,
+        alignment=TA_CENTER
+    )
+    
+    subtitle_style = ParagraphStyle(
+        'Subtitle',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor='#2D3561',
+        spaceAfter=20,
+        alignment=TA_CENTER
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor='#2D3561',
+        spaceAfter=10,
+        spaceBefore=16
+    )
+    
+    # Style for bold category headers (like CLOTHING, ELECTRONICS)
+    category_style = ParagraphStyle(
+        'CategoryHeader',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor='#2D3561',
+        fontName='Helvetica-Bold',
+        spaceAfter=6,
+        spaceBefore=10
+    )
+    
+    # Style for subheadings (like "Food Markets:", "Key Tips:", "Day 1:")
+    subheading_style = ParagraphStyle(
+        'Subheading',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor='#2D3561',
+        fontName='Helvetica-Bold',
+        spaceAfter=6,
+        spaceBefore=10
     )
 
-    c1, c2 = st.columns(2)
-    with c1: travel_date = st.date_input("When?", min_value=dt_date.today())
-    with c2: days = st.number_input("How long?", min_value=1, value=5)
+    body_style = ParagraphStyle(
+        'Body',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=14
+    )
     
-    st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True) 
+    story = []
     
-    b_col1, b_col2 = st.columns(2)
+    # Title and dates
+    story.append(Paragraph(_strip_emoji(f"TripMate AI - {destination}"), title_style))
+    story.append(Spacer(1, 0.08*inch))
+    story.append(Paragraph(_strip_emoji(f"{dates}"), subtitle_style))
     
-    with b_col1:
-        with stylable_container(
-            key="teal_btn",
-            css_styles="""
-                button {
-                    background-color: #2a9d8f !important;
-                    color: white !important;
-                    border: none !important;
-                    height: 2.8em !important;
-                    width: 100% !important;
-                    font-weight: 700 !important;
-                    border-radius: 10px !important;
-                }
-                button:hover {
-                    background-color: #1e877b !important;
-                    color: white !important;
-                    box-shadow: 0 4px 12px rgba(30, 135, 123, 0.3) !important;
-                }
-            """,
-        ):
-            submit_pack = st.form_submit_button("Packing Guide")
-
-    with b_col2:
-        with stylable_container(
-            key="yellow_btn",
-            css_styles="""
-                button {
-                    background-color: #f6e1a6 !important;
-                    color: #264653 !important;
-                    border: none !important;
-                    height: 2.8em !important;
-                    width: 100% !important;
-                    font-weight: 700 !important;
-                    border-radius: 10px !important;
-                }
-                button:hover {
-                  
-                }
-            """,
-        ):
-            submit_places = st.form_submit_button("Visit Ideas")
+    # Add each section WITHOUT page breaks
+    for section_title, content in content_dict.items():
+        if content:
+            # Add spacing between sections instead of page break
+            story.append(Spacer(1, 0.3*inch))
+            story.append(Paragraph(_strip_emoji(section_title), heading_style))
+            story.append(Spacer(1, 0.14*inch))
+            
+            # Split content into lines
+            lines = content.split('\n')
+            for line in lines:
+                line = _strip_emoji(line.strip())
+                if not line:
+                    continue
+                
+                # Check if line is a category header (starts and ends with **)
+                if line.startswith('**') and line.endswith('**'):
+                    # This is a category header - make it bold with spacing
+                    category_text = line.strip('*').strip()
+                    story.append(Spacer(1, 0.08*inch))  # Space before category
+                    story.append(Paragraph(category_text, category_style))
+                    story.append(Spacer(1, 0.04*inch))
+                
+                # Day headings (add extra spacing between days)
+                elif line.startswith('Day ') and len(line) < 80:
+                    subheading_text = line.replace('**', '')
+                    story.append(Spacer(1, 0.16*inch))
+                    story.append(Paragraph(subheading_text, subheading_style))
+                    story.append(Spacer(1, 0.06*inch))
+                
+                # Check if line is a subheading (ends with : and is short)
+                elif line.endswith(':') and len(line) < 80:
+                    subheading_text = line.replace('**', '')
+                    story.append(Spacer(1, 0.06*inch))  # Space before subheading
+                    story.append(Paragraph(subheading_text, subheading_style))
+                    story.append(Spacer(1, 0.04*inch))
+                
+                # Check if line is a bullet point
+                elif line.startswith('•') or line.startswith('-'):
+                    # Regular bullet point
+                    bullet_text = line[1:].strip()
+                    # Remove any remaining ** markers
+                    bullet_text = bullet_text.replace('**', '')
+                    # Convert any remaining markdown to HTML bold
+                    bullet_text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', bullet_text)
+                    try:
+                        story.append(Paragraph(f"  • {bullet_text}", body_style))
+                        story.append(Spacer(1, 0.04*inch))
+                    except:
+                        continue
+                
+                # Regular paragraph with bold text
+                else:
+                    # Convert ** to <b> tags for PDF
+                    para_text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
+                    try:
+                        story.append(Paragraph(para_text, body_style))
+                        story.append(Spacer(1, 0.05*inch))
+                    except:
+                        continue
     
-    st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
-# --- 4. LOGIC ---
-if "packing_result" not in st.session_state:
-    st.session_state.packing_result = None
-if "itinerary_result" not in st.session_state:
-    st.session_state.itinerary_result = None
-if "last_inputs" not in st.session_state:
-    st.session_state.last_inputs = None
-if "last_dest" not in st.session_state:
-    st.session_state.last_dest = None
-if "last_date" not in st.session_state:
-    st.session_state.last_date = None
-if "last_days" not in st.session_state:
-    st.session_state.last_days = None
-
-inputs_key = (dest, str(travel_date), days)
-
-if submit_pack or submit_places:
-    if not dest:
-        st.warning("Please tell us where you're going!")
-    else:
-        if (travel_date - dt_date.today()).days <= 5:
-            st.success("Using Live Weather.")
+def main():
+    # Display logo if exists
+    if os.path.exists("logo.png"):
+        logo_b64 = get_base64_of_bin_file("logo.png")
+        st.markdown(
+            f"<div class='logo-wrap'><img src='data:image/png;base64,{logo_b64}' alt='TripMate logo'></div>",
+            unsafe_allow_html=True,
+        )
+    
+    # Header
+   
+    st.markdown('<div class="sub-header">Your AI-Powered Travel Planning Assistant</div>', 
+                unsafe_allow_html=True)
+    
+    # Initialize agent
+    agent = TripMateAgent()
+    
+    # Initialize session state
+    if 'generated_content' not in st.session_state:
+        st.session_state.generated_content = {}
+    if 'pdf_content' not in st.session_state:
+        st.session_state.pdf_content = {}
+    if 'trip_info' not in st.session_state:
+        st.session_state.trip_info = {}
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("Trip Details")
+        
+        # Load cities
+        city_options, city_mapping = load_cities()
+        
+        # Destination input
+        if city_options and city_mapping:
+            destination_display = st.selectbox(
+                "Destination",
+                options=city_options,
+                index=None,
+                placeholder="Choose an option",
+                help="Select your destination city"
+            )
+            if destination_display:
+                destination = city_mapping.get(destination_display, destination_display.split(',')[0].strip())
+            else:
+                destination = None
         else:
-            st.info("Using Seasonal History.")
+            # No CSV or empty - require manual input
+            destination_display = st.text_input("Destination (City, Country)", 
+                                               placeholder="e.g., Paris, France",
+                                               help="Enter destination in 'City, Country' format")
+            if destination_display:
+                destination = destination_display.split(',')[0].strip()
+            else:
+                destination = None
+        
+        # Date inputs
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "Start Date",
+                value=datetime.now() + timedelta(days=7),
+                min_value=datetime.now()
+            )
+        with col2:
+            end_date = st.date_input(
+                "End Date",
+                value=datetime.now() + timedelta(days=14),
+                min_value=start_date
+            )
+        
+        st.markdown("---")
+        
+        # Travel preferences
+        st.header("Preferences")
+        
+        travel_style = st.select_slider(
+            "Travel Style",
+            options=["Budget", "Moderate", "Luxury"],
+            value="Moderate"
+        )
+        
+        num_travelers = st.number_input(
+            "Number of Travelers",
+            min_value=1,
+            max_value=10,
+            value=1
+        )
+        
+        interests = st.multiselect(
+            "Interests",
+            ["Sightseeing", "Food & Dining", "Adventure", "Culture", "Nightlife", 
+             "Shopping", "Nature", "Relaxation"],
+            default=["Sightseeing", "Food & Dining"]
+        )
+        
+        # Dietary restrictions
+        st.subheader("Dietary Preferences")
+        dietary_restrictions = st.multiselect(
+            "Select any dietary restrictions",
+            ["Vegetarian", "Vegan", "Halal", "Kosher", "Gluten-Free", 
+             "Dairy-Free", "Nut Allergies"],
+            default=[]
+        )
+        
+        st.markdown("---")
+        
+        # Feature selection
+        st.header("What to Generate")
+        generate_budget = st.checkbox("💰 Budget Estimate", value=True)
+        generate_packing = st.checkbox("🎒 Packing List", value=True)
+        generate_itinerary = st.checkbox("📅 Itinerary", value=True)
+        generate_transport = st.checkbox("🚇 Transport Guide", value=True)
+        generate_culture = st.checkbox("🌍 Cultural Tips", value=True)
+        generate_restaurants = st.checkbox("🍴 Restaurant Guide", value=True)
+        
+        st.markdown("---")
+        
+        # Generate button
+        generate_button = st.button("🚀 Generate Travel Plan", type="primary")
+    
+    # Main content area
+    if generate_button:
+        # Validate inputs
+        if not destination:
+            st.error("Please enter a destination!")
+            return
+            
+        if end_date < start_date:
+            st.error("End date must be after start date!")
+            return
+        
+        # Format dates
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        date_range = f"{start_str} to {end_str}"
+        
+        interest_str = ", ".join(interests) if interests else "general sightseeing"
+        
+        # Clear previous content
+        st.session_state.generated_content = {}
+        st.session_state.pdf_content = {}
+        st.session_state.trip_info = {
+            'destination': destination_display if 'destination_display' in locals() else destination,
+            'destination_city': destination,
+            'dates': date_range,
+            'dietary': dietary_restrictions
+        }
+        
+        # Progress tracking
+        total_tasks = sum([generate_budget, generate_packing, generate_itinerary, 
+                          generate_transport, generate_culture, generate_restaurants])
+        current_task = 0
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Generate sections
+        if generate_budget:
+            current_task += 1
+            status_text.text(f"💰 Generating budget estimate... ({current_task}/{total_tasks})")
+            progress_bar.progress(current_task / total_tasks)
+            
+            with st.spinner("Creating budget breakdown..."):
+                budget_data = agent.estimate_budget(
+                    destination, start_str, end_str, 
+                    travel_style.lower(), num_travelers
+                )
+            st.session_state.generated_content['budget'] = budget_data['budget_text']
+            st.session_state.pdf_content['Budget Estimate'] = budget_data['budget_text']
+        
+        if generate_packing:
+            current_task += 1
+            status_text.text(f"🎒 Generating packing list... ({current_task}/{total_tasks})")
+            progress_bar.progress(current_task / total_tasks)
+            
+            with st.spinner("Creating your packing list..."):
+                packing_list = agent.generate_packing_list(
+                    destination, start_str, end_str, travel_style.lower()
+                )
+            st.session_state.generated_content['packing'] = packing_list
+            st.session_state.pdf_content['Packing List'] = packing_list
+        
+        if generate_itinerary:
+            current_task += 1
+            status_text.text(f"📅 Generating itinerary... ({current_task}/{total_tasks})")
+            progress_bar.progress(current_task / total_tasks)
+            
+            with st.spinner("Planning your itinerary..."):
+                itinerary = agent.generate_itinerary(
+                    destination, start_str, end_str, interest_str
+                )
+            st.session_state.generated_content['itinerary'] = itinerary
+            st.session_state.pdf_content['Itinerary'] = itinerary
+        
+        if generate_transport:
+            current_task += 1
+            status_text.text(f"🚇 Generating transport guide... ({current_task}/{total_tasks})")
+            progress_bar.progress(current_task / total_tasks)
+            
+            with st.spinner("Mapping out transportation..."):
+                transport_guide = agent.get_public_transport_guide(destination)
+            st.session_state.generated_content['transport'] = transport_guide
+            st.session_state.pdf_content['Public Transportation'] = transport_guide
+        
+        if generate_culture:
+            current_task += 1
+            status_text.text(f"🌍 Generating cultural tips... ({current_task}/{total_tasks})")
+            progress_bar.progress(current_task / total_tasks)
+            
+            with st.spinner("Learning local customs..."):
+                cultural_tips = agent.get_cultural_tips(destination)
+            st.session_state.generated_content['culture'] = cultural_tips
+            st.session_state.pdf_content['Cultural Tips'] = cultural_tips
+        
+        if generate_restaurants:
+            current_task += 1
+            status_text.text(f"🍴 Finding best restaurants... ({current_task}/{total_tasks})")
+            progress_bar.progress(current_task / total_tasks)
+            
+            with st.spinner("Discovering dining spots..."):
+                restaurant_guide = agent.get_restaurant_recommendations(
+                    destination, 
+                    dietary_restrictions if dietary_restrictions else None,
+                    "all",
+                    travel_style.lower()
+                )
+            st.session_state.generated_content['restaurants'] = restaurant_guide
+            st.session_state.pdf_content['Restaurant Guide'] = restaurant_guide
+        
+        # Currency info
+        with st.spinner("Getting currency information..."):
+            currency_info = agent.get_currency_info(destination)
+        st.session_state.generated_content['currency'] = currency_info
+        st.session_state.pdf_content['Currency Information'] = currency_info
+        
+        progress_bar.progress(1.0)
+        status_text.text("✅ All sections generated successfully!")
+    
+    # Display content
+    if st.session_state.generated_content:
+        
+        st.markdown('<div class="box-container">', unsafe_allow_html=True)
+        
+        if 'budget' in st.session_state.generated_content:
+            budget_html = clean_html_output(st.session_state.generated_content['budget'])
+            st.markdown(f'''
+            <div class="info-box budget-box">
+                <div class="section-title">💰 Budget Estimate</div>
+                {budget_html}
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        if 'packing' in st.session_state.generated_content:
+            packing_html = clean_html_output(st.session_state.generated_content['packing'])
+            st.markdown(f'''
+            <div class="info-box packing-box">
+                <div class="section-title">🎒 Packing List</div>
+                {packing_html}
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        if 'itinerary' in st.session_state.generated_content:
+            itinerary_html = clean_html_output(st.session_state.generated_content['itinerary'])
+            st.markdown(f'''
+            <div class="info-box itinerary-box">
+                <div class="section-title">📅 Your Itinerary</div>
+                {itinerary_html}
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        if 'transport' in st.session_state.generated_content:
+            transport_html = clean_html_output(st.session_state.generated_content['transport'])
+            st.markdown(f'''
+            <div class="info-box transport-box">
+                <div class="section-title">🚇 Public Transportation</div>
+                {transport_html}
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        if 'culture' in st.session_state.generated_content:
+            culture_html = clean_html_output(st.session_state.generated_content['culture'])
+            st.markdown(f'''
+            <div class="info-box culture-box">
+                <div class="section-title">🌍 Cultural Tips</div>
+                {culture_html}
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        if 'restaurants' in st.session_state.generated_content:
+            dietary_note = f"<p><em>🥗 Filtered for: {', '.join(st.session_state.trip_info['dietary'])}</em></p>" if st.session_state.trip_info.get('dietary') else ""
+            restaurant_html = clean_html_output(st.session_state.generated_content['restaurants'])
+            restaurant_html = restaurant_html.lstrip()
+            
+            # Use st.components.html for better HTML rendering
+            full_html = (
+                f'<div class="info-box restaurant-box">'
+                f'<div class="section-title">🍴 Where to Eat</div>'
+                f'{dietary_note}'
+                f'{restaurant_html}'
+                f'</div>'
+            )
+            st.markdown(full_html, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Currency box - only show if has content
+        if 'currency' in st.session_state.generated_content:
+            currency_html = clean_html_output(st.session_state.generated_content['currency'])
+            if currency_html.strip():  # Only show if not empty
+                st.markdown(f'''
+                <div class="info-box currency-box">
+                    <div class="section-title">💱 Currency & Payments</div>
+                    {currency_html}
+                </div>
+                ''', unsafe_allow_html=True)
+        
+        # PDF Download - using st.container to wrap everything properly
+        with st.container():
+            st.markdown('<div class="download-section">', unsafe_allow_html=True)
+            st.markdown('<h3 style="color: #2D3561; margin-bottom: 1rem;">📥 Download Your Travel Plan</h3>', unsafe_allow_html=True)
+            
+            pdf_buffer = create_pdf(
+                st.session_state.pdf_content, 
+                st.session_state.trip_info['destination'],
+                st.session_state.trip_info['dates']
+            )
+            
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.download_button(
+                    label="Download Complete Travel Plan (PDF)",
+                    data=pdf_buffer,
+                    file_name=f"TripMate_{st.session_state.trip_info['destination_city'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            
+            st.success(f"🎉 Your complete travel plan for **{st.session_state.trip_info['destination']}** is ready!")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+    else:
+        # Welcome screen
+        st.markdown("""
+        ## Welcome to TripMate AI! 👋
+        
+        Your intelligent travel companion that helps you plan the perfect trip with:
+        
+        - 💰 **Budget Estimation** - Know your costs upfront with local currency info
+        - 🎒 **Smart Packing Lists** - Never forget the essentials
+        - 📅 **Personalized Itineraries** - Day-by-day activity planning
+        - 🚇 **Public Transport Guides** - Navigate like a local
+        - 🌍 **Cultural Tips** - Respect local customs
+        - 🍴 **Restaurant Recommendations** - Find great food with dietary filters
+        
+        ### How to Get Started:
+        1. 📍 Enter your destination in the sidebar
+        2. 📅 Set your travel dates
+        3. ⚙️ Customize your preferences
+        4. ✅ Select which sections to generate
+        5. 🚀 Click "Generate Travel Plan"
+        
+        **Ready? Fill in the sidebar and let's plan your adventure! →**
+        """)
 
-        st.session_state.last_inputs = inputs_key
-        st.session_state.last_dest = dest
-        st.session_state.last_date = str(travel_date)
-        st.session_state.last_days = days
+        st.markdown(
+            "<div class='app-footer'>"
+            "Developed by <a href='https://www.linkedin.com/in/hananabukwaider/' target='_blank'>"
+            "Hanan Abu Kwaider</a>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
-        if submit_pack:
-            st.session_state.itinerary_result = None
-            with st.spinner("Analyzing Packing Needs..."):
-                try:
-                    result = run_advisor(dest, str(travel_date), days)
-                    result = str(result or "").strip()
-                    st.session_state.packing_result = result or "(No content returned. Please try again.)"
-                except Exception as exc:
-                    st.session_state.packing_result = None
-                    st.error(f"Packing guide failed: {exc}")
-
-        if submit_places:
-            st.session_state.packing_result = None
-            with st.spinner("Curating Itinerary..."):
-                try:
-                    result = get_itinerary(dest, str(travel_date), days)
-                    result = str(result or "").strip()
-                    st.session_state.itinerary_result = result or "(No content returned. Please try again.)"
-                except Exception as exc:
-                    st.session_state.itinerary_result = None
-                    st.error(f"Itinerary failed: {exc}")
-
-display_dest = st.session_state.last_dest or dest
-
-if st.session_state.packing_result:
-    pdf_data = create_pdf(display_dest, st.session_state.packing_result, "Packing List")
-    render_section_header("Your Packing Guide", pdf_data, f"Packing_{display_dest}.pdf")
-    packing_sections = _split_by_bold_sections(st.session_state.packing_result)
-    render_result_cards("Your Packing Guide", packing_sections)
-
-if st.session_state.itinerary_result:
-    pdf_data = create_pdf(display_dest, st.session_state.itinerary_result, "Itinerary")
-    render_section_header("Recommended Itinerary", pdf_data, f"Itinerary_{display_dest}.pdf")
-    itinerary_sections = _split_itinerary_sections(st.session_state.itinerary_result)
-    render_result_cards("Recommended Itinerary", itinerary_sections)
-
-st.markdown(
-    "<div class='app-footer'>"
-    "Developed by <a href='https://www.linkedin.com/in/hananabukwaider/' target='_blank'>"
-    "Hanan Abu Kwaider</a>"
-    "</div>",
-    unsafe_allow_html=True,
-)
+if __name__ == "__main__":
+    main()
